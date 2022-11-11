@@ -8,6 +8,6 @@ python3 textual_inversion_flax.py \
   --placeholder_token="<cat-toy>" --initializer_token="toy" \
   --resolution=512 \
   --train_batch_size=1 \
-  --max_train_steps=3 \
+  --max_train_steps=3000 \
   --learning_rate=5.0e-04 --scale_lr \
   --output_dir="textual_inversion_cat_test"
