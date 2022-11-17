@@ -1,8 +1,10 @@
+export OUTPUT_DIR="/home/andrew/model"
+export INSTANCE_DIR="/home/andrew/data/cowboy"
 export MODEL_NAME="duongna/stable-diffusion-v1-4-flax"
-export INSTANCE_DIR="/home/dhruvnaik/sd-comic-generation/data/dog/"
-export OUTPUT_DIR="/home/dhruvnaik/sd-comic-generation/models/test_dreambooth_dog"
 
-python3 train_dreambooth_flax.py \
+
+
+python train_dreambooth_flax.py \
   --pretrained_model_name_or_path=$MODEL_NAME  \
   --instance_data_dir=$INSTANCE_DIR \
   --output_dir=$OUTPUT_DIR \
