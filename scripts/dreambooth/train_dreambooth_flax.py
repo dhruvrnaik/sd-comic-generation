@@ -31,6 +31,7 @@ from PIL import Image
 from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import CLIPFeatureExtractor, CLIPTokenizer, FlaxCLIPTextModel, set_seed
+from jax_smi import initialise_tracking
 
 
 logger = logging.getLogger(__name__)
@@ -311,6 +312,7 @@ def get_params_to_save(params):
 
 def main():
     args = parse_args()
+    initialise_tracking()
 
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -400,6 +402,9 @@ def main():
         center_crop=args.center_crop,
     )
 
+    print(f"dataset: {len(train_dataset)}")
+    print(f"dir: {args.instance_data_dir}")
+
     def collate_fn(examples):
         input_ids = [example["instance_prompt_ids"] for example in examples]
         pixel_values = [example["instance_images"] for example in examples]
@@ -434,7 +439,7 @@ def main():
         weight_dtype = jnp.float16
     elif args.mixed_precision == "bf16":
         weight_dtype = jnp.bfloat16
-
+    print(f"weight type: {weight_dtype}")
     # Load models and create wrapper for stable diffusion
     text_encoder = FlaxCLIPTextModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="text_encoder", dtype=weight_dtype
@@ -564,7 +569,7 @@ def main():
         return new_unet_state, new_text_encoder_state, metrics, new_train_rng
 
     # Create parallel version of the train step
-    p_train_step = jax.pmap(train_step, "batch", donate_argnums=(0, 1))
+    p_train_step = jax.pmap(train_step, "batch", donate_argnums=(0, 1, 2))
 
     # Replicate the train state on each device
     unet_state = jax_utils.replicate(unet_state)
