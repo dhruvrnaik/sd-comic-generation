@@ -14,3 +14,5 @@ python train_dreambooth_flax.py \
   --learning_rate=5e-6 \
   --max_train_steps=400 \
   --mixed_precision="bf16"
+    
+# Some change
