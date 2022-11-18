@@ -28,7 +28,7 @@ from flax.training.common_utils import shard
 from PIL import Image
 from transformers import CLIPFeatureExtractor, CLIPTokenizer, FlaxCLIPTextModel
 
-from diffusers.models import FlaxAutoencoderKL
+from diffusers.models import FlaxAutoencoderKL, FlaxUNet2DConditionModel
 from .flax_infusion_unet import FlaxInfusionUNetModel
 from diffusers.pipeline_flax_utils import FlaxDiffusionPipeline
 from diffusers.schedulers import (
@@ -44,17 +44,9 @@ from diffusers.pipelines.stable_diffusion.safety_checker_flax import FlaxStableD
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
-def preprocess(image):
-    w, h = image.size
-    w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
-    image = image.resize((w, h), resample=PIL.Image.LANCZOS)
-    image = np.array(image).astype(np.float32) / 255.0
-    image = image[None].transpose(0, 3, 1, 2)
-    #image = torch.from_numpy(image)
-    image = jnp.array(image, dtype=jnp.int32)
-    return 2.0 * image - 1.0
 
-class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
+
+class FlaxStableDiffusionPipeline(FlaxDiffusionPipeline):
     r"""
     Pipeline for text-to-image generation using Stable Diffusion.
 
@@ -88,9 +80,9 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         vae: FlaxAutoencoderKL,
         text_encoder: FlaxCLIPTextModel,
         tokenizer: CLIPTokenizer,
-        unet: FlaxInfusionUNetModel,
+        unet: FlaxUNet2DConditionModel,
         scheduler: Union[
-            FlaxDDIMScheduler, FlaxPNDMScheduler, FlaxLMSDiscreteScheduler #, FlaxDPMSolverMultistepScheduler (Import error)
+            FlaxDDIMScheduler, FlaxPNDMScheduler, FlaxLMSDiscreteScheduler#, FlaxDPMSolverMultistepScheduler
         ],
         safety_checker: FlaxStableDiffusionSafetyChecker,
         feature_extractor: CLIPFeatureExtractor,
@@ -119,11 +111,8 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
             feature_extractor=feature_extractor,
         )
 
-        self.biasing_images = None #List[PIL.Image.Image],
-        self.layer_biases = [.1,.1,.1,.1]
-
-    def set_unet(unet):
-        self.unet = unet
+        self.biassing_images = None #List[PIL.Image.Image],
+        self.layer_biases = [.1,.1,.1,.1],
 
     def prepare_inputs(self, prompt: Union[str, List[str]]):
         if not isinstance(prompt, (str, list)):
@@ -177,6 +166,8 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         prompt_ids: jnp.array,
         params: Union[Dict, FrozenDict],
         prng_seed: jax.random.PRNGKey,
+        #biasing_images: jnp.array,
+        #layer_biases: jnp.array,
         num_inference_steps: int = 50,
         height: int = 512,
         width: int = 512,
@@ -184,10 +175,6 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         latents: Optional[jnp.array] = None,
         debug: bool = False,
     ):
-
-        biasing_images = self.biasing_images
-        layer_biases = self.layer_biases
-
         if height % 8 != 0 or width % 8 != 0:
             raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
@@ -205,25 +192,12 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         uncond_embeddings = self.text_encoder(uncond_input.input_ids, params=params["text_encoder"])[0]
         context = jnp.concatenate([uncond_embeddings, text_embeddings])
 
-        biasing_images = [preprocess(b_image) for b_image in biasing_images]
-
         latents_shape = (batch_size, self.unet.in_channels, height // 8, width // 8)
         if latents is None:
-            #biasing_images = [b_image.to(device=self.device, dtype=latents_dtype) for b_image in biasing_images]
-            #biasing_latent_dists = [self.vae.encode(b_image).latent_dist for b_image in biasing_images]
-            biasing_latent_dists = [self.vae.apply({"params": params["vae"]}, b_image, method=self.vae.encode).latent_dist.mean \
-                                                                                for b_image in biasing_images]
-
             latents = jax.random.normal(prng_seed, shape=latents_shape, dtype=jnp.float32)
         else:
             if latents.shape != latents_shape:
                 raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {latents_shape}")
-
-        biasing_latent_dists = [b_latents.transpose(0, 3, 1, 2) for b_latents in biasing_latent_dists]
-
-
-        biasing_latents = [b_latents * self.scheduler.init_noise_sigma for b_latents in biasing_latent_dists] #TODO Verify the need
-
 
         def loop_body(step, args):
             latents, scheduler_state = args
@@ -237,20 +211,12 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
 
             latents_input = self.scheduler.scale_model_input(scheduler_state, latents_input, t)
 
-            #Prev 4 lines but for biassing latents
-            latent_model_biases = []
-            for b_latents in biasing_latents:
-              latent_model_biases.append(jnp.concatenate([b_latents] * 2))
-            latent_model_biases = [self.scheduler.scale_model_input(scheduler_state, bias, t) for bias in latent_model_biases]
-
             # predict the noise residual
             noise_pred = self.unet.apply(
                 {"params": params["unet"]},
                 jnp.array(latents_input),
                 jnp.array(timestep, dtype=jnp.int32),
                 encoder_hidden_states=context,
-                biasSamples=latent_model_biases,
-                layer_biases=layer_biases
             ).sample
             # perform guidance
             noise_pred_uncond, noise_prediction_text = jnp.split(noise_pred, 2, axis=0)
@@ -286,8 +252,6 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         prompt_ids: jnp.array,
         params: Union[Dict, FrozenDict],
         prng_seed: jax.random.PRNGKey,
-        biasing_images: List[PIL.Image.Image], # Union[torch.FloatTensor, PIL.Image.Image],
-        layer_biases = [.1,.1,.1,.1],
         num_inference_steps: int = 50,
         height: int = 512,
         width: int = 512,
@@ -341,17 +305,17 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
             element is a list of `bool`s denoting whether the corresponding generated image likely represents
             "not-safe-for-work" (nsfw) content, according to the `safety_checker`.
         """
-        #self.unet = FlaxInfusionUNetModel self.unet
-        self.biasing_images = biasing_images 
-        self.layer_biases = layer_biases
+        #import pdb; pdb.set_trace()
+
+        #_p_generate(self, prompt_ids, params, prng_seed,  prompt_ids, prompt_ids,  num_inference_steps, height, width, guidance_scale, latents, debug)
 
         if jit:
             images = _p_generate(
-                self, prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug,  prng_seed, prng_seed,
+                self, prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug
             )
         else:
             images = self._generate(
-                prompt_ids, params, prng_seed, biasing_images, layer_biases, num_inference_steps, height, width, guidance_scale, latents, debug
+                prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug
             )
 
         if self.safety_checker is not None:
@@ -382,7 +346,7 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
 # TODO: maybe use a config dict instead of so many static argnums
 @partial(jax.pmap, static_broadcasted_argnums=(0, 4, 5, 6, 7, 9))
 def _p_generate(
-    pipe, prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug,  prng_seed_1, prng_seed_2, 
+    pipe, prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug
 ):
     return pipe._generate(
         prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug
@@ -399,4 +363,3 @@ def unshard(x: jnp.ndarray):
     num_devices, batch_size = x.shape[:2]
     rest = x.shape[2:]
     return x.reshape(num_devices * batch_size, *rest)
-    

@@ -24,7 +24,7 @@ from diffusers.configuration_utils import ConfigMixin, flax_register_to_config
 from diffusers.modeling_flax_utils import FlaxModelMixin
 from diffusers.utils import BaseOutput
 from diffusers.models.embeddings_flax import FlaxTimestepEmbedding, FlaxTimesteps
-from diffusers.models.unet_blocks_flax import (
+from diffusers.models.unet_2d_blocks_flax import (
     FlaxCrossAttnDownBlock2D,
     FlaxCrossAttnUpBlock2D,
     FlaxDownBlock2D,
@@ -224,10 +224,10 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
     def __call__(
         self,
         sample,
-        biasSamples: List[jnp.ndarray],
-        layer_biases:List[float],
         timesteps,
         encoder_hidden_states,
+        biasSamples: List[jnp.ndarray] = [],
+        layer_biases:List[float] = [.1,.1,.1,.1],
         return_dict: bool = True,
         train: bool = False,
     ) -> Union[FlaxUNet2DConditionOutput, Tuple]:
@@ -256,6 +256,7 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
 
         t_emb = self.time_proj(timesteps)
         t_emb = self.time_embedding(t_emb)
+
 
         # 2. pre-process
         sample = jnp.transpose(sample, (0, 2, 3, 1))
@@ -298,11 +299,12 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
               down_block_res_biassamples[i] += res_biasSamples[i]
 
             #Infusion occurs
-            bias_factor = layer_biases[block_num]
-            sum_biasSamples = sum(biasSamples)/len(biasSamples)
-            sample = sample + sum_biasSamples*bias_factor
-            sum_res_biasSamples = [sum(tup)/len(tup) for tup in zip(*res_biasSamples)] #Note SumVsMean is a Variable to play with
-            res_samples = tuple([tup[0] + bias_factor*tup[1] for tup in zip(res_samples, sum_res_biasSamples)])
+            if(len(biasSamples) > 0):
+                bias_factor = layer_biases[block_num]
+                sum_biasSamples = sum(biasSamples)/len(biasSamples)
+                sample = sample + sum_biasSamples*bias_factor
+                sum_res_biasSamples = [sum(tup)/len(tup) for tup in zip(*res_biasSamples)] #Note SumVsMean is a Variable to play with
+                res_samples = tuple([tup[0] + bias_factor*tup[1] for tup in zip(res_samples, sum_res_biasSamples)])
             #print()
 
 
