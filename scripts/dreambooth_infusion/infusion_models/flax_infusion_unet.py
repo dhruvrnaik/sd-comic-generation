@@ -103,20 +103,20 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
     attention_head_dim: int = 8
     cross_attention_dim: int = 1280
     dropout: float = 0.0
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
     freq_shift: int = 0
 
     def init_weights(self, rng: jax.random.PRNGKey) -> FrozenDict:
         # init input tensors
         sample_shape = (1, self.in_channels, self.sample_size, self.sample_size)
-        sample = jnp.zeros(sample_shape, dtype=jnp.float32)
-        timesteps = jnp.ones((1,), dtype=jnp.int32)
-        encoder_hidden_states = jnp.zeros((1, 1, self.cross_attention_dim), dtype=jnp.float32)
+        sample = jnp.zeros(sample_shape, dtype=jnp.float16)
+        timesteps = jnp.ones((1,), dtype=jnp.int16)
+        encoder_hidden_states = jnp.zeros((1, 1, self.cross_attention_dim), dtype=jnp.float16)
 
         params_rng, dropout_rng = jax.random.split(rng)
         rngs = {"params": params_rng, "dropout": dropout_rng}
 
-        return self.init(rngs, sample, timesteps, encoder_hidden_states)["params"]
+        return self.init(rngs, sample, timesteps, encoder_hidden_states, biasSample =sample )["params"]
 
     def setup(self):
         block_out_channels = self.block_out_channels
@@ -226,7 +226,7 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
         sample,
         timesteps,
         encoder_hidden_states,
-        biasSamples: List[jnp.ndarray] = [],
+        biasSample: jnp.ndarray = None,
         layer_biases:List[float] = [.1,.1,.1,.1],
         return_dict: bool = True,
         train: bool = False,
@@ -263,48 +263,57 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
         sample = self.conv_in(sample)
 
         # 2.1 pre-process Biass stuff
-        biasSamples = [jnp.transpose(b_sample, (0, 2, 3, 1)) for b_sample in biasSamples]
-        biasSamples = [self.conv_in(b_sample) for b_sample in biasSamples]
+        biasSample = jnp.transpose(biasSample, (0, 2, 3, 1))
+        biasSample = self.conv_in(biasSample)
+
+        #biasSamples = [jnp.transpose(b_sample, (0, 2, 3, 1)) for b_sample in biasSamples]
+        #biasSamples = [self.conv_in(b_sample) for b_sample in biasSamples]
 
         # 3. down
         down_block_res_samples = (sample,)        
-        down_block_res_biassamples= [(b_sample,) for b_sample in biasSamples]
+        down_block_biasRes_samples = (biasSample,) # [(b_sample,) for b_sample in biasSamples]
+        num_bias_ex = biasSample.shape[0]
         block_num = 0
         for down_block in self.down_blocks:
-            new_biasSamples = []
-            new_res_biasSamples = []
             if isinstance(down_block, FlaxCrossAttnDownBlock2D):
                 sample, res_samples = down_block(sample, t_emb, encoder_hidden_states, deterministic=not train)
                 
                 #Same for bias blocks
-                for b_sample in biasSamples:
-                    biasSample, res_biasSample = down_block(b_sample, t_emb, encoder_hidden_states, deterministic=True) #Note Variable to play with
-                    new_biasSamples.append(biasSample)
-                    new_res_biasSamples.append(res_biasSample)
+                num_encoder_reps = biasSample.shape[0]//encoder_hidden_states.shape[0]
+                #import pdb; pdb.set_trace()
+                biasSample, biasRes_samples = down_block(biasSample, t_emb.repeat(num_encoder_reps, axis=0), encoder_hidden_states.repeat(num_encoder_reps, axis=0), deterministic=True)
+                # for b_sample in biasSamples:
+                #     biasSample, res_biasSample = down_block(b_sample, t_emb, encoder_hidden_states, deterministic=True) #Note Variable to play with
+                #     new_biasSamples.append(biasSample)
+                #     new_res_biasSamples.append(res_biasSample)
 
             else:
                 sample, res_samples = down_block(sample, t_emb, deterministic=not train)
-                for b_sample in biasSamples:
-                    biasSample, res_biasSample = down_block(b_sample, t_emb, deterministic=True)
-                    new_biasSamples.append(biasSample)
-                    new_res_biasSamples.append(res_biasSample)
+                biasSample, biasRes_samples = down_block(biasSample, t_emb.repeat(num_encoder_reps, axis=0), deterministic=True)
+                # for b_sample in biasSamples:
+                #     biasSample, res_biasSample = down_block(b_sample, t_emb, deterministic=True)
+                #     new_biasSamples.append(biasSample)
+                #     new_res_biasSamples.append(res_biasSample)
 
             #Updating biasSamples and res_BiasSamples with updated samples
-            biasSamples = new_biasSamples
-            res_biasSamples= new_res_biasSamples
+
 
             down_block_res_samples += res_samples
+            down_block_biasRes_samples += biasRes_samples
             #updating down_block_res_samples for Bias Blocks
-            for i in range(len(biasSamples)):
-              down_block_res_biassamples[i] += res_biasSamples[i]
+            # for i in range(len(biasSamples)):
+            #   down_block_res_biassamples[i] += res_biasSamples[i]
 
             #Infusion occurs
-            if(len(biasSamples) > 0):
-                bias_factor = layer_biases[block_num]
-                sum_biasSamples = sum(biasSamples)/len(biasSamples)
-                sample = sample + sum_biasSamples*bias_factor
-                sum_res_biasSamples = [sum(tup)/len(tup) for tup in zip(*res_biasSamples)] #Note SumVsMean is a Variable to play with
-                res_samples = tuple([tup[0] + bias_factor*tup[1] for tup in zip(res_samples, sum_res_biasSamples)])
+            #Possible error: When adding something goes incorrectly with batch size larger than 1
+            bias_factor = layer_biases[block_num] #* timesteps[1]/1000
+            mean_biasSamples = biasSample.mean(axis=0) # sum(biasSample)/len(biasSample)
+            sample = sample*(1-bias_factor) + mean_biasSamples*bias_factor
+            mean_res_bias_sample = tuple(res_bias.mean(axis = 0) for res_bias in biasRes_samples)
+            res_samples = tuple([(1-bias_factor)*tup[0] + bias_factor*tup[1] for tup in zip(res_samples, mean_res_bias_sample)])
+
+            #sum_res_biasSamples = [sum(tup)/len(tup) for tup in zip(*res_biasSamples)] #Note SumVsMean is a Variable to play with
+            #res_samples = tuple([(1-bias_factor)*tup[0] + bias_factor*tup[1] for tup in zip(res_samples, sum_res_biasSamples)])
             #print()
 
 
@@ -312,7 +321,6 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
 
         # 4. mid
         sample = self.mid_block(sample, t_emb, encoder_hidden_states, deterministic=not train)
-
         # 5. up
         for up_block in self.up_blocks:
             res_samples = down_block_res_samples[-(self.layers_per_block + 1) :]

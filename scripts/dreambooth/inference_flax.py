@@ -6,10 +6,10 @@ from flax.training.common_utils import shard
 from diffusers import FlaxStableDiffusionPipeline
 from PIL import Image
 pipeline, params = FlaxStableDiffusionPipeline.from_pretrained(
-    "/home/andrew/model", dtype=jax.numpy.bfloat16
+    "/home/andrew/model/dreambooth", dtype=jax.numpy.bfloat16
 )
 
-prompt = "Cowboy with a hat"
+prompt = "krosh playing cards"
 
 prng_seed = jax.random.PRNGKey(0)
 num_inference_steps = 50
@@ -35,4 +35,4 @@ def image_grid(imgs, rows, cols):
     for i, img in enumerate(imgs): grid.paste(img, box=(i%cols*w, i//cols*h))
     return grid
 g = image_grid(images,4,2)
-g.save("test_after_tuning.jpg")
+g.save("generated/krosh_playing_cards_longtrain.jpg")

@@ -221,7 +221,6 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
 
         biasing_latent_dists = [b_latents.transpose(0, 3, 1, 2) for b_latents in biasing_latent_dists]
 
-
         biasing_latents = [b_latents * self.scheduler.init_noise_sigma for b_latents in biasing_latent_dists] #TODO Verify the need
 
 
@@ -231,7 +230,6 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
             latents_input = jnp.concatenate([latents] * 2)
-
             t = jnp.array(scheduler_state.timesteps, dtype=jnp.int32)[step]
             timestep = jnp.broadcast_to(t, latents_input.shape[0])
 
@@ -243,13 +241,15 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
               latent_model_biases.append(jnp.concatenate([b_latents] * 2))
             latent_model_biases = [self.scheduler.scale_model_input(scheduler_state, bias, t) for bias in latent_model_biases]
 
+            #latent_model_biases = latent_model_biases[0] #, axis = 0)
+            latent_model_biases = jnp.concatenate(latent_model_biases, axis = 0)
             # predict the noise residual
             noise_pred = self.unet.apply(
                 {"params": params["unet"]},
                 jnp.array(latents_input),
                 jnp.array(timestep, dtype=jnp.int32),
                 encoder_hidden_states=context,
-                biasSamples=latent_model_biases,
+                biasSample=latent_model_biases,
                 layer_biases=layer_biases
             ).sample
             # perform guidance
@@ -263,6 +263,7 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         scheduler_state = self.scheduler.set_timesteps(
             params["scheduler"], num_inference_steps=num_inference_steps, shape=latents.shape
         )
+        #import pdb; pdb.set_trace()
 
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
@@ -287,7 +288,7 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         params: Union[Dict, FrozenDict],
         prng_seed: jax.random.PRNGKey,
         biasing_images: List[PIL.Image.Image], # Union[torch.FloatTensor, PIL.Image.Image],
-        layer_biases = [.1,.1,.1,.1],
+        layer_biases = [.01,.03,.04,.05],
         num_inference_steps: int = 50,
         height: int = 512,
         width: int = 512,
