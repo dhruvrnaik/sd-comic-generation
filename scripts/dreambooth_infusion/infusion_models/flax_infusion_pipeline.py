@@ -119,8 +119,8 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
             feature_extractor=feature_extractor,
         )
 
-        self.biasing_images = None #List[PIL.Image.Image],
-        self.layer_biases = [.1,.1,.1,.1]
+        # self.biasing_images = None #List[PIL.Image.Image],
+        # self.layer_biases = [.1,.1,.1,.1]
 
     def set_unet(unet):
         self.unet = unet
@@ -183,6 +183,8 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         guidance_scale: float = 7.5,
         latents: Optional[jnp.array] = None,
         debug: bool = False,
+        biasing_images: List[PIL.Image.Image] = None,
+        layer_biases: List[float] = None,
     ):
 
         biasing_images = self.biasing_images
@@ -205,13 +207,19 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         uncond_embeddings = self.text_encoder(uncond_input.input_ids, params=params["text_encoder"])[0]
         context = jnp.concatenate([uncond_embeddings, text_embeddings])
 
-        biasing_images = [preprocess(b_image) for b_image in biasing_images]
+        #biasing_images = jnp.array(biasing_images)
+        # biasing_images = [preprocess(b_image) for b_image in biasing_images]
+        biasing_images = [jnp.array(b_image[None]) for b_image in biasing_images]
+        #biasing_images = jnp.concatenate(biasing_images, axis=0)
+
+        #image = (biasing_images / 2 + 0.5).clip(0, 1).transpose(0, 2, 3, 1)
+        #return image
 
         latents_shape = (batch_size, self.unet.in_channels, height // 8, width // 8)
         if latents is None:
             #biasing_images = [b_image.to(device=self.device, dtype=latents_dtype) for b_image in biasing_images]
             #biasing_latent_dists = [self.vae.encode(b_image).latent_dist for b_image in biasing_images]
-            biasing_latent_dists = [self.vae.apply({"params": params["vae"]}, b_image, method=self.vae.encode).latent_dist.mean \
+            biasing_latent_dists = [self.vae.apply({"params": params["vae"]}, b_image, method=self.vae.encode).latent_dist.sample(prng_seed) \
                                                                                 for b_image in biasing_images]
 
             latents = jax.random.normal(prng_seed, shape=latents_shape, dtype=jnp.float32)
@@ -219,13 +227,13 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
             if latents.shape != latents_shape:
                 raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {latents_shape}")
 
-        biasing_latent_dists = [b_latents.transpose(0, 3, 1, 2) for b_latents in biasing_latent_dists]
+        biasing_latent_dists = [jnp.transpose(b_latents, (0, 3, 1, 2)) for b_latents in biasing_latent_dists]
 
-        biasing_latents = [b_latents * self.scheduler.init_noise_sigma for b_latents in biasing_latent_dists] #TODO Verify the need
+        biasing_latents = [.18 * b_latents * self.scheduler.init_noise_sigma for b_latents in biasing_latent_dists] #TODO Verify the need
 
 
         def loop_body(step, args):
-            latents, scheduler_state = args
+            latents, scheduler_state, layer_biases = args
             # For classifier free guidance, we need to do two forward passes.
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
@@ -241,6 +249,7 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
               latent_model_biases.append(jnp.concatenate([b_latents] * 2))
             latent_model_biases = [self.scheduler.scale_model_input(scheduler_state, bias, t) for bias in latent_model_biases]
 
+            layer_biases = [bias*.994 for bias in layer_biases] # CHANGE:ITERSTEP
             #latent_model_biases = latent_model_biases[0] #, axis = 0)
             latent_model_biases = jnp.concatenate(latent_model_biases, axis = 0)
             # predict the noise residual
@@ -258,7 +267,7 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
 
             # compute the previous noisy sample x_t -> x_t-1
             latents, scheduler_state = self.scheduler.step(scheduler_state, noise_pred, t, latents).to_tuple()
-            return latents, scheduler_state
+            return latents, scheduler_state, layer_biases
 
         scheduler_state = self.scheduler.set_timesteps(
             params["scheduler"], num_inference_steps=num_inference_steps, shape=latents.shape
@@ -268,12 +277,13 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
 
+        print("Number of Inference steps is ", num_inference_steps)
         if debug:
             # run with python for loop
             for i in range(num_inference_steps):
                 latents, scheduler_state = loop_body(i, (latents, scheduler_state))
         else:
-            latents, _ = jax.lax.fori_loop(0, num_inference_steps, loop_body, (latents, scheduler_state))
+            latents, _, _ = jax.lax.fori_loop(0, num_inference_steps, loop_body, (latents, scheduler_state, layer_biases))
 
         # scale and decode the image latents with vae
         latents = 1 / 0.18215 * latents
@@ -348,11 +358,11 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
 
         if jit:
             images = _p_generate(
-                self, prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug,  prng_seed, prng_seed,
+                self, prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug
             )
         else:
             images = self._generate(
-                prompt_ids, params, prng_seed, biasing_images, layer_biases, num_inference_steps, height, width, guidance_scale, latents, debug
+                prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug
             )
 
         if self.safety_checker is not None:
@@ -361,9 +371,9 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
             num_devices, batch_size = images.shape[:2]
 
             images_uint8_casted = np.asarray(images_uint8_casted).reshape(num_devices * batch_size, height, width, 3)
-            images_uint8_casted, has_nsfw_concept = self._run_safety_checker(images_uint8_casted, safety_params, jit)
+            #images_uint8_casted, has_nsfw_concept = self._run_safety_checker(images_uint8_casted, safety_params, jit)
+            has_nsfw_concept = [False]
             images = np.asarray(images)
-
             # block images
             if any(has_nsfw_concept):
                 for i, is_nsfw in enumerate(has_nsfw_concept):
@@ -383,7 +393,7 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
 # TODO: maybe use a config dict instead of so many static argnums
 @partial(jax.pmap, static_broadcasted_argnums=(0, 4, 5, 6, 7, 9))
 def _p_generate(
-    pipe, prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug,  prng_seed_1, prng_seed_2, 
+    pipe, prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug
 ):
     return pipe._generate(
         prompt_ids, params, prng_seed, num_inference_steps, height, width, guidance_scale, latents, debug

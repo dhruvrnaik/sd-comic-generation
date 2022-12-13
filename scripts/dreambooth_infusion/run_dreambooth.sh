@@ -1,5 +1,5 @@
 export OUTPUT_DIR="/home/andrew/model/infusion"
-export INSTANCE_DIR="/home/andrew/data/krosh"
+export INSTANCE_DIR="/mnt/disks/persist"
 export MODEL_NAME="duongna/stable-diffusion-v1-4-flax"
 #"/home/andrew/model/dreambooth"
 
@@ -12,7 +12,7 @@ python3 train_infusion_flax.py \
   --resolution=512 \
   --train_batch_size=1 \
   --learning_rate=5e-6 \
-  --max_train_steps=4000 \
+  --max_train_steps=40000 \
   --mixed_precision="bf16"
     
 # Some change

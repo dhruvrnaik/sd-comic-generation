@@ -308,9 +308,11 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
             #Possible error: When adding something goes incorrectly with batch size larger than 1
             bias_factor = layer_biases[block_num] #* timesteps[1]/1000
             mean_biasSamples = biasSample.mean(axis=0) # sum(biasSample)/len(biasSample)
-            sample = sample*(1-bias_factor) + mean_biasSamples*bias_factor
+            #TODO ADD: sample = sample*(1-bias_factor) + mean_biasSamples*bias_factor
+            sample = sample*(1) + mean_biasSamples*bias_factor
             mean_res_bias_sample = tuple(res_bias.mean(axis = 0) for res_bias in biasRes_samples)
-            res_samples = tuple([(1-bias_factor)*tup[0] + bias_factor*tup[1] for tup in zip(res_samples, mean_res_bias_sample)])
+            #TODO ADD: res_samples = tuple([(1-bias_factor)*tup[0] + bias_factor*tup[1] for tup in zip(res_samples, mean_res_bias_sample)])
+            res_samples = tuple([(1)*tup[0] + bias_factor*tup[1] for tup in zip(res_samples, mean_res_bias_sample)])
 
             #sum_res_biasSamples = [sum(tup)/len(tup) for tup in zip(*res_biasSamples)] #Note SumVsMean is a Variable to play with
             #res_samples = tuple([(1-bias_factor)*tup[0] + bias_factor*tup[1] for tup in zip(res_samples, sum_res_biasSamples)])

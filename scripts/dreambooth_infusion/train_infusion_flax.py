@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Optional
 import random
+import json 
 
 import numpy as np
 import torch
@@ -234,54 +235,103 @@ class DreamBoothDataset(Dataset):
         self.center_crop = center_crop
         self.tokenizer = tokenizer
 
+        vids_path = "flintstones_dataset/video_frames"
+        json_name = "flintstones_annotations_v1-0.json"
+
         self.instance_data_root = Path(instance_data_root)
         if not self.instance_data_root.exists():
             raise ValueError("Instance images root doesn't exists.")
 
-        self.instance_images_path = list(Path(instance_data_root).iterdir())
-        self.num_instance_images = len(self.instance_images_path)
-        self.instance_prompt = instance_prompt
-        self._length = self.num_instance_images
+        data_root = "/mnt/disks/persist"
+        vid_dataset = "flintstones_dataset/video_frames"
 
-        if class_data_root is not None:
-            self.class_data_root = Path(class_data_root)
-            self.class_data_root.mkdir(parents=True, exist_ok=True)
-            self.class_images_path = list(self.class_data_root.iterdir())
-            self.num_class_images = len(self.class_images_path)
-            self._length = max(self.num_class_images, self.num_instance_images)
-            self.class_prompt = class_prompt
-        else:
-            self.class_data_root = None
+        jsons = json.load(open(os.path.join(data_root, json_name)))
+        id_to_description = {i['globalID']:i['description'] for i in jsons}
+
+        vid_keys = list(id_to_description.keys())
+        vid_keys.sort()
+
+        self.image_paths = []
+        self.descriptions = []
+
+        for key in vid_keys:
+            vid_path = os.path.join(data_root, vids_path , key+".npy")
+            self.image_paths.append(vid_path)
+            self.descriptions.append(id_to_description[key])
+            # np_vid = np.load(vid_path)
+            # images.append(Image.fromarray(np_vid[40]))
+        self._length = len(self.image_paths)
+
+        print(self._length)
+
+        # self.instance_images_path = list(Path(instance_data_root).iterdir())
+        # self.num_instance_images = len(self.images)
+        # self.instance_prompt = instance_prompt
+        # self._length = self.num_instance_images
+
+        # if class_data_root is not None:
+        #     self.class_data_root = Path(class_data_root)
+        #     self.class_data_root.mkdir(parents=True, exist_ok=True)
+        #     self.class_images_path = list(self.class_data_root.iterdir())
+        #     self.num_class_images = len(self.class_images_path)
+        #     self._length = max(self.num_class_images, self.num_instance_images)
+        #     self.class_prompt = class_prompt
+        # else:
+        #     self.class_data_root = None
+
+        self.image_transforms = transforms.Compose(
+            [
+                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )
 
     def __len__(self):
-        return self._length
+        return self._length -1
 
     def __getitem__(self, index):
         example = {}
-        instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
+        index = index + 1
+
+        np_vid = np.load(self.image_paths[index])
+        instance_image = Image.fromarray(np_vid[40])
+        instance_prompt = self.descriptions[index]
+
+        # instance_image = Image.open(self.instance_images_path[index % self.num_instance_images])
         if not instance_image.mode == "RGB":
             instance_image = instance_image.convert("RGB")
-        example["instance_images"] = image_transforms(instance_image)
+        example["instance_images"] = self.image_transforms(instance_image)
+
+
+        np_vid = np.load(self.image_paths[index-1])
+        instance_image = Image.fromarray(np_vid[40])
+        if not instance_image.mode == "RGB":
+            instance_image = instance_image.convert("RGB")
+        example["bias_images"] = self.image_transforms(instance_image)
+
         example["instance_prompt_ids"] = self.tokenizer(
-            self.instance_prompt,
+            instance_prompt,
             padding="do_not_pad",
             truncation=True,
             max_length=self.tokenizer.model_max_length,
         ).input_ids
 
-        if self.class_data_root:
-            class_image = Image.open(self.class_images_path[index % self.num_class_images])
-            if not class_image.mode == "RGB":
-                class_image = class_image.convert("RGB")
-            example["class_images"] = image_transforms(class_image)
-            example["class_prompt_ids"] = self.tokenizer(
-                self.class_prompt,
-                padding="do_not_pad",
-                truncation=True,
-                max_length=self.tokenizer.model_max_length,
-            ).input_ids
+        # if self.class_data_root:
+        #     class_image = Image.open(self.class_images_path[index % self.num_class_images])
+        #     if not class_image.mode == "RGB":
+        #         class_image = class_image.convert("RGB")
+        #     example["class_images"] = self.image_transforms(class_image)
+        #     example["class_prompt_ids"] = self.tokenizer(
+        #         self.class_prompt,
+        #         padding="do_not_pad",
+        #         truncation=True,
+        #         max_length=self.tokenizer.model_max_length,
+        #     ).input_ids
 
         return example
+
 
 def LoadBiasingImages(biassing_data_root):
     """
@@ -297,10 +347,10 @@ def LoadBiasingImages(biassing_data_root):
         biassing_imgs.append(image_transforms(instance_image))
     return biassing_imgs
 
-def combine_BiassingImges(biassing_imgs):
-    bias_pixel_values = torch.stack(biassing_imgs)
-    bias_pixel_values = bias_pixel_values.to(memory_format=torch.contiguous_format).float()
-    return bias_pixel_values.numpy().astype(dtype = np.float16)
+# def combine_BiassingImges(biassing_imgs):
+#     bias_pixel_values = torch.stack(biassing_imgs)
+#     bias_pixel_values = bias_pixel_values.to(memory_format=torch.contiguous_format).float()
+#     return bias_pixel_values.numpy().astype(dtype = np.float16)
 
 
 class PromptDataset(Dataset):
@@ -434,7 +484,7 @@ def main():
     bias_img_path = "/home/andrew/data/b_krosh"
     b_img_path = LoadBiasingImages(bias_img_path)
     biassing_images =  LoadBiasingImages(bias_img_path)
-    biassing_pixel_values = combine_BiassingImges(biassing_images)
+    #biassing_pixel_values = combine_BiassingImges(biassing_images)
 
     print(f"dataset: {len(train_dataset)}")
     print(f"dir: {args.instance_data_dir}")
@@ -442,6 +492,7 @@ def main():
     def collate_fn(examples):
         input_ids = [example["instance_prompt_ids"] for example in examples]
         pixel_values = [example["instance_images"] for example in examples]
+        bias_pixel_values = [example["bias_images"] for example in examples]
 
         # Concat class and instance examples for prior preservation.
         # We do this to avoid doing two forward passes.
@@ -452,6 +503,9 @@ def main():
         pixel_values = torch.stack(pixel_values)
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
+        bias_pixel_values = torch.stack(bias_pixel_values)
+        bias_pixel_values = bias_pixel_values.to(memory_format=torch.contiguous_format).float()
+
         input_ids = tokenizer.pad(
             {"input_ids": input_ids}, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt"
         ).input_ids
@@ -459,6 +513,7 @@ def main():
         batch = {
             "input_ids": input_ids,
             "pixel_values": pixel_values,
+            "bias_pixel_values": bias_pixel_values,
         }
         batch = {k: v.numpy() for k, v in batch.items()}
         return batch
@@ -553,9 +608,9 @@ def main():
             #import pdb; pdb.set_trace()
             # jax.debug.breakpoint()
 
-            bias_idx = random.randrange(0, biassing_pixel_values.shape[0])                        
+            #bias_idx = random.randrange(0, biassing_pixel_values.shape[0])                        
             biassing_vae_outs = vae.apply(
-                {"params": vae_params}, biassing_pixel_values[bias_idx:bias_idx+1], deterministic=True, method=vae.encode
+                {"params": vae_params}, batch["bias_pixel_values"], deterministic=True, method=vae.encode
             )
             biassing_latents = biassing_vae_outs.latent_dist.sample(sample_rng)
             biassing_latents = jnp.transpose(biassing_latents, (0, 3, 1, 2))
@@ -597,7 +652,7 @@ def main():
             unet_outputs = unet.apply(
                 {"params": params["unet"]}, noisy_latents.astype(np.float16), timesteps, encoder_hidden_states,
                 biasSample=biassing_latents.astype(np.float16),
-                layer_biases=[.01,.03,.04,.05],
+                layer_biases=[.03,.1,.12,.15],
                 train=True
             )
 
