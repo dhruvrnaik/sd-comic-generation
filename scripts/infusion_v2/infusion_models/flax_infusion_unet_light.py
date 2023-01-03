@@ -292,7 +292,7 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
                 biasList[cur_block] = sample
                 biasList[9+cur_block] = res_samples
             else:
-                sample = sample + biasList[cur_block] * self.layer_biases[cur_block]
+                sample = sample*(1) + biasList[cur_block] * self.layer_biases[cur_block]
                 bias_factor = self.layer_biases[9+cur_block]
                 res_samples = tuple([(1)*tup[0] + bias_factor*tup[1] for tup in zip(res_samples, biasList[9+cur_block])])
             down_block_res_samples += res_samples
@@ -307,7 +307,7 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
         if(biasses_is_none):
             biasList[cur_block] = sample
         else:
-            sample = sample + biasList[cur_block] * self.layer_biases[cur_block]
+            sample = sample*(1) + biasList[cur_block] * self.layer_biases[cur_block]
         cur_block += 1
 
 
@@ -328,7 +328,7 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
             if(biasses_is_none):
                 biasList[cur_block] = sample
             else:
-                sample = sample + biasList[cur_block]* self.layer_biases[cur_block]
+                sample = sample*(1) + biasList[cur_block]* self.layer_biases[cur_block]
             cur_block += 1
 
 

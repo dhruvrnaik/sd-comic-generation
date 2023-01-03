@@ -42,7 +42,30 @@ from diffusers.utils import logging
 from diffusers.pipelines.stable_diffusion import FlaxStableDiffusionPipelineOutput
 from diffusers.pipelines.stable_diffusion.safety_checker_flax import FlaxStableDiffusionSafetyChecker
 
+weights_time_1_5 = [-0.0314941, -0.03125, -0.03125, -0.03125, -0.0183105, 0.026123, 0.03125, \
+                     -0.03125, 0.03125, -0.03125, -0.03125, -0.03125, -0.03125]
 
+weights_time_2_5 = [-0.0314941, -0.03125, -0.015625, 0.00427246, 0.027832, 0.0317383, 0.03125, \
+                    -0.03125, -0.00958252, -0.0625, -0.0317383, -0.03125, 0.017334]
+
+weights_time_3_5 =  [0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, -0.0625, \
+                     -0.03125, 0.0319824, 0.0319824, 0.03125]
+
+weights_time_4_5 =  [0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.0314941, \
+                     -0.0527344, -0.03125, 0.0314941, 0.03125, 0.03125]
+
+weights_time_5_5 =  [0.03125, 0.03125, 0.024292, 0.0169678, 0.03125, 0.03125, -0.03125, 0.03125, \
+                     -0.03125, -0.0186768, -0.03125, -0.03125, 0.03125]
+
+# weights_time_3_5 =  [0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, -0.0625, \
+#                      -0.03125, 0.0319824, 0.0319824, 0.03125]
+
+# weights_time_4_5 =  [0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.0314941, \
+#                      -0.0527344, -0.03125, 0.0314941, 0.03125, 0.03125]
+
+# weights_time_5_5 =  [0.03125, 0.03125, 0.024292, 0.0169678, 0.03125, 0.03125, -0.03125, 0.03125, \
+#                      -0.03125, -0.0186768, -0.03125, -0.03125, 0.03125]
+                                
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 def preprocess(image):
@@ -240,6 +263,8 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
             # For classifier free guidance, we need to do two forward passes.
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
+            #latents += jax.random.normal(prng_seed, shape=latents_shape, dtype=jnp.float32) * ((num_inference_steps-step)**2 / 100*(num_inference_steps)**2)
+
             latents_input = jnp.concatenate([latents] * 2)
             t = jnp.array(scheduler_state.timesteps, dtype=jnp.int32)[step]
             timestep = jnp.broadcast_to(t, latents_input.shape[0])
@@ -286,7 +311,18 @@ class FlaxInfusingStableDiffusionPipeline(FlaxDiffusionPipeline):
             for i in range(num_inference_steps):
                 latents, scheduler_state = loop_body(i, (latents, scheduler_state))
         else:
-            latents, _, _ = jax.lax.fori_loop(0, num_inference_steps, loop_body, (latents, scheduler_state, layer_biases))
+
+            latents, _, _ = jax.lax.fori_loop( 0, 10, loop_body, (latents, scheduler_state, weights_time_1_5 ))
+            latents, _, _ = jax.lax.fori_loop(10, 20, loop_body, (latents, scheduler_state, weights_time_2_5 ))
+            latents, _, _ = jax.lax.fori_loop(20, 30, loop_body, (latents, scheduler_state, weights_time_3_5 ))
+            latents, _, _ = jax.lax.fori_loop(30, 40, loop_body, (latents, scheduler_state, weights_time_4_5 ))
+            latents, _, _ = jax.lax.fori_loop(40, 50, loop_body, (latents, scheduler_state, weights_time_5_5 ))
+
+            # init_lb = [-0.0314942, -0.03125, -0.03125, -0.03125, -0.0251465, 0.0170898, 0.03125, \
+            #                 -0.03125, 0.0324707, -0.03125, -0.03125, -0.03125, -0.03125]
+            # init_lb = [5*i for i in init_lb]
+
+            #latents, _, _ = jax.lax.fori_loop(0, num_inference_steps, loop_body, (latents, scheduler_state, layer_biases))
 
         # scale and decode the image latents with vae
         latents = 1 / 0.18215 * latents

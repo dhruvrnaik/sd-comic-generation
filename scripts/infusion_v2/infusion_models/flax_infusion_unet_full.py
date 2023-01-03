@@ -316,14 +316,14 @@ class FlaxInfusionUNetModel(nn.Module, FlaxModelMixin, ConfigMixin):
 
             bias_factor = layer_biases[block_num]
             mean_biasSamples = biasSample.mean(axis=0) 
-            sample = sample + mean_biasSamples*bias_factor
+            sample = sample*(1) + mean_biasSamples*bias_factor
 
             block_num += 1
 
         # 4. mid
         sample = self.mid_block(sample, t_emb, encoder_hidden_states, deterministic=not train)
         biasSample = self.mid_block(biasSample, t_emb.repeat(num_encoder_reps, axis=0), encoder_hidden_states.repeat(num_encoder_reps, axis=0), deterministic=True)
-        sample += biasSample.mean(axis=0)*layer_biases[4]
+        sample = sample*(1) + biasSample.mean(axis=0)*layer_biases[4]
         block_num += 1
         
         # 5. up

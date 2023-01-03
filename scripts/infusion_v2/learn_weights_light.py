@@ -585,7 +585,7 @@ def main():
     )
 
     noise_scheduler = FlaxDDPMScheduler(
-        beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=50
+        beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=1000
     )
 
     # Initialize our training
@@ -641,8 +641,8 @@ def main():
             timesteps = jax.random.randint(
                 timestep_rng,
                 (bsz,),
-                0,
-                noise_scheduler.config.num_train_timesteps,
+                int(noise_scheduler.config.num_train_timesteps*4/5),
+                int(noise_scheduler.config.num_train_timesteps*5/5),
             )
 
             # Add noise to the latents according to the noise magnitude at each timestep

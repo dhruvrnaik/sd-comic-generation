@@ -72,10 +72,7 @@ prompt = "Person walking"
 root_folder = "/home/andrew/data/imgs_on_white"
 img_folders = [f.path for f in os.scandir(root_folder) if f.is_dir()]
 
-
-from IPython.core.debugger import set_trace
-
-def gen_image(character_name, prompt = None ,weights = [1e-5]*13, bias_decay = .99, guidance_scale = 7.5):
+def gen_image(character_name, prompt = None ,weights = [.2,.2,.2,.2], bias_decay = .99, guidance_scale = 7.5):
     only_char_name = character_name.split("/")[-1]
     
     if(prompt == None):
@@ -114,10 +111,9 @@ def gen_image(character_name, prompt = None ,weights = [1e-5]*13, bias_decay = .
     logger.info("Done")
     g = image_grid(images,2,4)
     
-    if not os.path.exists(f"experiments/full_unet_mod/{only_char_name}"):
-        os.makedirs(f"experiments/full_unet_mod/{only_char_name}")
-    layer_bias_factors = [round(i,5) for i in layer_bias_factors]
-    save_dir = f"experiments/full_unet_mod/{only_char_name}/{num_inference_steps}__debug_{layer_bias_factors}_{0:02d}{prompt[0]}.jpg"
+    if not os.path.exists(f"experiments/disappearing/{only_char_name}"):
+        os.makedirs(f"experiments/disappearing/{only_char_name}")
+    save_dir = f"experiments/disappearing/{only_char_name}/{num_inference_steps}_5_exp_reduc_in_time_{layer_bias_factors[:2]}_{0:02d}.jpg"
     print("Saving to file...", save_dir)
     g.save(save_dir)
     return g
@@ -125,33 +121,41 @@ def gen_image(character_name, prompt = None ,weights = [1e-5]*13, bias_decay = .
 trees = ["green_c_tree", "xmas_c_tree", "red_r_tree", "green_r_tree", \
          "xmas_r_tree", "palm_r_tree", "red_c_tree", "palm_c_tree" ]
 
-# trees += ["fox_c_animal", "doc_c_animal", "sqrl_c_animal", "elep_c_animal", \
-#          "doc_r_animal", "rabbit_r_animal", "cat_r_animal", "elep_r_animal" ]
+trees += ["fox_c_animal", "doc_c_animal", "sqrl_c_animal", "elep_c_animal", \
+         "doc_r_animal", "rabbit_r_animal", "cat_r_animal", "elep_r_animal" ]
 
-# trees += ["girl_c_pers", "teach_c_pers", "white_c_pers", "profile_c_pers", \
-#          "man_r_pers", "lady_r_pers", "old_r_pers", "profile_r_pers" ]
+trees += ["girl_c_pers", "teach_c_pers", "white_c_pers", "profile_c_pers", \
+         "man_r_pers", "lady_r_pers", "old_r_pers", "profile_r_pers" ]
          
-# trees += ["red_c_house", "sketch_house", "wood_c_house", "brick_c_house", \
-#          "big_r_house", "white_house", "big_c_house", "style_r_house" ]
+trees += ["red_c_house", "sketch_house", "wood_c_house", "brick_c_house", \
+         "big_r_house", "white_house", "big_c_house", "style_r_house" ]
+
+
+
+
+# trees = ["b_cowboy", "b_cowboy_2", "b_krosh_full"]
 
 
 
 for folder in trees:
-    # weights = [.001, .05, .1, .1, .1, .1, .1, .05, .001, .0001, .0001, .0001, .0001]
     weights = [0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, 0.03125, -0.0158691, \
-                -0.03125, -0.03125, 0.03125, 0.03125, 0.03125]
+                   -0.03125, -0.03125, 0.03125, 0.03125, 0.03125]
+    #weights = [5*i for i in weights]
+    gen_image(f'/home/andrew/data/imgs_on_white/{folder}',prompt = None, weights = weights, bias_decay=1)
 
-    gen_image(f'/home/andrew/data/imgs_on_white/{folder}',prompt = "tree", weights = weights, bias_decay=.5)
 
     #weights = [1e-5]*13
     #gen_image(f'/home/andrew/data/imgs_on_white/{folder}',prompt = "tree", weights = weights, bias_decay=.5)
+import pdb; pdb.set_trace()
+
 
 cats
+
+
 
 for folder in trees:
     weights = [.1, .1, .1, .1, .1, .1, .1, .1, .1, .0001, .0001, .0001, .0001]
     gen_image(f'/home/andrew/data/imgs_on_white/{folder}',prompt = None, weights = weights, bias_decay=.99)
-    
     
     weights = [.15, .15, .15, .15, .15, .15, .15, .15, .15, .0001, .0001, .0001, .0001]
     gen_image(f'/home/andrew/data/imgs_on_white/{folder}',prompt = None, weights = weights, bias_decay=.99)
